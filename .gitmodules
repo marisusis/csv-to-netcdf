@@ -1,0 +1,3 @@
+[submodule "netcdf-c"]
+	path = netcdf-c
+	url = https://github.com/Unidata/netcdf-c
