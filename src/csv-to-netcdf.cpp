@@ -1,6 +1,8 @@
 #include "CLI/CLI.hpp"
 #include "spdlog/spdlog.h"
 #include "netcdf.h"
+#include <indicators/cursor_control.hpp>
+#include <indicators/progress_bar.hpp>
 
 #include <iostream>
 #include <vector>
@@ -8,16 +10,11 @@
 #include <fstream>
 #include <map>
 #include <regex>
+#include <ranges>
 
 #include "parsing.hpp"
-
-#define FILE_NAME "output.nc"
-
-enum class ReadState {
-    Scanning,
-    Metadata,
-    Data
-};
+#include "writing.hpp"
+#include "utils.hpp"
 
 void handle_error(int status) {
     if (status != NC_NOERR) {
@@ -50,6 +47,11 @@ int main(int argc, char **argv) {
 
     bool strict = false;
     app.add_flag("--strict,-s", strict, "Strict mode");
+
+    int deflate = 0;
+    app.add_option("--deflate,-z", deflate, "Deflate level for NetCDF variables")
+        ->default_val(0)
+        ->check(CLI::Range(1, 9));
     
 
     CLI11_PARSE(app, argc, argv);
@@ -60,6 +62,10 @@ int main(int argc, char **argv) {
 
     if (verbose) {
         spdlog::set_level(spdlog::level::debug);
+    }
+
+    if (deflate) {
+        spdlog::info("compression enabled at level {}.", deflate);
     }
 
     CaptureSchema schema;
@@ -75,13 +81,8 @@ int main(int argc, char **argv) {
             schema = CaptureSchemaV3;
             break;
         default:
-            spdlog::error("Invalid schema version: {}", schema_version);
+            spdlog::error("invalid schema version: {}", schema_version);
             exit(EXIT_FAILURE);
-    }
-
-    if (schema_version != 2) {
-        spdlog::error("Only schema version 2 is supported");
-        exit(EXIT_FAILURE);
     }
 
     if (file_list) {
@@ -95,66 +96,30 @@ int main(int argc, char **argv) {
     file.open(input_file_path);
 
     std::string line;
-    std::map <std::string, std::string> metadata;
-
-    ReadState readState = ReadState::Scanning;
-    while (true) {
-
-        // each line should be small enough to not be a memory issue since it's less than a second of data
-        if (!std::getline(file, line).good()) {
-            spdlog::error("Failed to read the first line of the input file");
-            exit(EXIT_FAILURE);
-        }
-
-        if (line == "## BEGIN METADATA ##") {
-            readState = ReadState::Metadata;
-            continue;
-        }
-
-        if (readState == ReadState::Metadata) {
-            if (line.length() <= 1) {
-                continue;
-            }
-
-            if (line.at(0) != '#') {
-                spdlog::debug("Found line missing # in metadata");
-                continue;
-            }
-
-            line = line.substr(1);
-
-            // Read the line as metadata
-            std::regex metadata_regex("\\s*([A-Z_]+)\\s+(.*)");
-            std::smatch match;
-            if (std::regex_match(line, match, metadata_regex)) {
-                std::string key = match[1];
-                std::string value = match[2];
-                metadata[key] = value;
-            }
-        }
-
-        if (line.find("END METADATA") != std::string::npos) {
-            if (readState != ReadState::Metadata) {
-                spdlog::error("Unexpected end of metadata section");
-                exit(EXIT_FAILURE);
-            }
-
-            readState = ReadState::Data;
-            break;
-        }
-    
-    }
 
     int ncid, time_dimid, sample_dimid;
     int samples_varid;
 
     // Create the file
-    handle_error(nc_create(FILE_NAME, NC_CLOBBER, &ncid));
+    handle_error(nc_create(output_file_path.c_str(), NC_NETCDF4, &ncid));
 
-    nc_put_att(ncid, NC_GLOBAL, "original_schema_version", NC_BYTE, 1, &schema_version);
-    for (auto const& [key, val] : metadata) {
-        nc_put_att(ncid, NC_GLOBAL, key.c_str(), NC_CHAR, val.length(), val.c_str());
+    int format;
+    nc_inq_format(ncid, &format);
+    spdlog::debug("NetCDF format: {}", format);
+
+    if (schema_version > 1) {
+        std::map<std::string, std::string> metadata = parse_metadata(file);
+
+        nc_put_att(ncid, NC_GLOBAL, "original_schema_version", NC_BYTE, 1, &schema_version);
+        
+        for (auto const& [key, val] : metadata) {
+            std::string lower_key = key;
+            std::transform(lower_key.begin(), lower_key.end(), lower_key.begin(), ::tolower);
+            nc_put_att(ncid, NC_GLOBAL, lower_key.c_str(), NC_CHAR, val.length(), val.c_str());
+            spdlog::debug("Added metadata: {} = {}", lower_key, val);
+        }
     }
+
 
     // Define the dimensions
     handle_error(nc_def_dim(ncid, "time", NC_UNLIMITED, &time_dimid));
@@ -163,45 +128,98 @@ int main(int argc, char **argv) {
 
     // Create variables
     std::map <std::string, int> varids;
-    for (auto const& label : schema.labels) {
+    auto labels_and_types = std::views::zip(schema.labels, schema.netcdf_types);
+    for (const auto& [label, type] : labels_and_types) {
         if (label == "samples") {
             break;
         }
 
         int varid;
-        handle_error(nc_def_var(ncid, label.c_str(), NC_INT, 1, &time_dimid, &varid));
+        handle_error(nc_def_var(ncid, label.c_str(), type, 1, &time_dimid, &varid));
+
+        if (deflate) {
+            handle_error(nc_def_var_deflate(ncid, varid, 0, 1, deflate));
+        }
+
         varids[label] = varid;
-        spdlog::debug("Created variable: {}", label);
+        spdlog::debug("Created variable: {} with type: {}", label, type);
     }
 
-    // Count samples in first few lines
-    int look_at = 1000;
-    int sample_count = 0;
-    for (int i = 0; i < look_at; i++) {
-        if (!std::getline(file, line).good()) {
-            spdlog::error("Failed to read the first line of the input file");
-            exit(EXIT_FAILURE);
-        }
-
-        auto result = parse_line_v2(line);
-        if (result.has_value()) {
-            
-        } else {
-            spdlog::error("Error parsing line: {}", result.error());
-        }
+        // Define the variable
+    handle_error(nc_def_var(ncid, "samples", NC_SHORT, 2, dimids, &samples_varid));
+    if (deflate) {
+        handle_error(nc_def_var_deflate(ncid, samples_varid, 0, 1, deflate));
     }
-
-    // Define the variable
-    handle_error(nc_def_var(ncid, "samples", NC_INT, 2, dimids, &samples_varid));
+    varids["samples"] = samples_varid;
 
     // End define mode
     handle_error(nc_enddef(ncid));
 
+    const size_t total_lines = count_data_lines(file);
+    spdlog::debug("Total lines: {}", total_lines);
 
+    // Read data lines
+    using namespace indicators;
+    ProgressBar bar{
+        option::BarWidth{50},
+        option::Start{"["},
+        option::Fill{"="},
+        option::Lead{">"},
+        option::Remainder{" "},
+        option::End{"]"},
+        option::PostfixText{"Extracting Archive"},
+        option::ForegroundColor{Color::green},
+        option::ShowElapsedTime{true},
+        option::ShowRemainingTime{true},
+    };
+
+    bar.set_option(option::PostfixText{std::format("Processing {}/{}", 0, total_lines)});
+
+    file.clear();
+    file.seekg(0, std::ios::beg);
+    size_t lines = 0;
+    size_t time_coord = 0;
+    size_t errors = 0;
+    for (std::string line; std::getline(file, line);) {
+        lines++;
+
+        if (line.empty() || line.at(0) == '#') {
+            continue;
+        }
+
+        try {
+            if (schema_version == 1) {
+                spdlog::error("Schema version 1 not supported");
+                exit(EXIT_FAILURE);
+            } else if (schema_version == 2) {
+                auto result = parse_line_v2(line);
+                write_line_v2(result, ncid, varids, time_coord);
+            } else if (schema_version == 3) {
+                auto result = parse_line_v3(line);
+                write_line_v3(result, ncid, varids, time_coord);
+            }
+        } catch (const std::exception& e) {
+            spdlog::debug("Error parsing line {}: {}\nLINE: {}", lines, e.what(), line.substr(0, 20));
+            errors++;
+            continue;
+        }
+
+        bar.set_progress(lines * 100 / total_lines);
+        bar.set_option(option::PostfixText{std::format("Processing {}/{}", lines, total_lines)});
+
+        time_coord++;
+    }
+
+    bar.mark_as_completed();
+
+    if (errors > 0) {
+        spdlog::warn("Encountered {} errors while parsing the input file", errors);
+    }
 
     // Close the file
     handle_error(nc_close(ncid));
 
-    spdlog::info("Successfully created NetCDF file: {}\n", FILE_NAME);
+    spdlog::info("Successfully created NetCDF file: {}\n", output_file_path);
+    spdlog::debug("Lines: {}", lines);
     return 0;
 }

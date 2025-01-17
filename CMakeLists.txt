@@ -17,10 +17,14 @@ set(CLI11_PRECOMPILED)
 add_executable(csv-to-netcdf
   src/csv-to-netcdf.cpp
   src/parsing.cpp
+  src/writing.cpp
 )
 target_link_libraries(csv-to-netcdf PRIVATE 
   netCDF::netcdf 
   CLI11::CLI11 
   HDF5::HDF5
   spdlog::spdlog
+)
+target_include_directories(csv-to-netcdf PRIVATE 
+  indicators/include
 )
