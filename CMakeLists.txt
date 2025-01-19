@@ -16,8 +16,6 @@ set(CLI11_PRECOMPILED)
 
 add_executable(csv-to-netcdf
   src/csv-to-netcdf.cpp
-  src/parsing.cpp
-  src/writing.cpp
 )
 target_link_libraries(csv-to-netcdf PRIVATE 
   netCDF::netcdf 
