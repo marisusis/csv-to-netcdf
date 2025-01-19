@@ -7,69 +7,171 @@
 #include <string>
 #include <cstdint>
 #include <expected>
+#include <any>
+#include <tuple>
 
-struct CaptureSchema {
-    uint8_t regular_column_count;
-    std::vector<std::string> types;
-    std::vector<uint32_t> netcdf_types;
-    std::vector<std::string> labels;
-    std::vector<std::string> units;
+struct ColumnSchema {
+    std::string label;
+    std::string unit;
+    uint32_t netcdf_type;
 };
 
-const CaptureSchema CaptureSchemaV1 = {
-    .regular_column_count =  1,
-    .types = {"double", "uint16_t"},
-    .netcdf_types = {NC_DOUBLE, NC_USHORT},
-    .labels = {"computer_time", "samples"},
-    .units = {"s", ""}
+
+class CaptureSchema2 {
+public:
+    const std::vector<ColumnSchema> columns;
+};;
+
+const CaptureSchema2 v1_schema = {
+    .columns = {
+        ColumnSchema{
+            .label = "computer_time",
+            .unit = "s",
+            .netcdf_type = NC_DOUBLE
+        },
+        ColumnSchema{
+            .label = "samples",
+            .unit = "",
+            .netcdf_type = NC_USHORT
+        }
+    }
 };
 
-const CaptureSchema CaptureSchemaV2 = {
-    .regular_column_count = 10,
-    .types = {"int", "int", "int", "double", "double", "double", "double", "int", "double", "double", "int", "uint16_t", "int"},
-    .netcdf_types = {NC_INT, NC_BYTE, NC_BYTE, NC_DOUBLE, NC_DOUBLE, NC_DOUBLE, NC_DOUBLE, NC_INT, NC_DOUBLE, NC_DOUBLE, NC_INT, NC_USHORT, NC_INT},
-    .labels = {"gps_time", "has_gps", "clipping", "sample_rate", "latitude", "longitude", "elevation", "satellite_count", "speed", "heading", "count_samples", "samples", "checksum"},
-    .units = {"s", "", "", "Hz", "degrees", "degrees", "m", "", "m/s", "degrees", "", "", ""}
+const CaptureSchema2 v2_schema = {
+    .columns = {
+        ColumnSchema{
+            .label = "gps_time",
+            .unit = "s",
+            .netcdf_type = NC_INT
+        },
+        ColumnSchema{
+            .label = "has_gps",
+            .unit = "",
+            .netcdf_type = NC_BYTE
+        },
+        ColumnSchema{
+            .label = "clipping",
+            .unit = "",
+            .netcdf_type = NC_BYTE
+        },
+        ColumnSchema{
+            .label = "sample_rate",
+            .unit = "Hz",
+            .netcdf_type = NC_DOUBLE
+        },
+        ColumnSchema{
+            .label = "latitude",
+            .unit = "degrees",
+            .netcdf_type = NC_DOUBLE
+        },
+        ColumnSchema{
+            .label = "longitude",
+            .unit = "degrees",
+            .netcdf_type = NC_DOUBLE
+        },
+        ColumnSchema{
+            .label = "elevation",
+            .unit = "m",
+            .netcdf_type = NC_DOUBLE
+        },
+        ColumnSchema{
+            .label = "satellite_count",
+            .unit = "",
+            .netcdf_type = NC_INT
+        },
+        ColumnSchema{
+            .label = "speed",
+            .unit = "m/s",
+            .netcdf_type = NC_DOUBLE
+        },
+        ColumnSchema{
+            .label = "heading",
+            .unit = "degrees",
+            .netcdf_type = NC_DOUBLE
+        },
+        // ColumnSchema{
+        //     .label = "count_samples",
+        //     .unit = "",
+        //     .netcdf_type = NC_INT
+        // },
+        ColumnSchema{
+            .label = "samples",
+            .unit = "",
+            .netcdf_type = NC_USHORT
+        }
+    }
 };
 
-const CaptureSchema CaptureSchemaV3 = {
-    .regular_column_count = 11,
-    .types = {"double", "double", "int", "int", "double", "double", "double", "double", "int", "double", "double", "int", "uint16_t", "int"},
-    .netcdf_types = {NC_DOUBLE, NC_INT, NC_BYTE, NC_BYTE, NC_DOUBLE, NC_DOUBLE, NC_DOUBLE, NC_DOUBLE, NC_INT, NC_DOUBLE, NC_DOUBLE, NC_INT, NC_USHORT, NC_INT},
-    .labels = {"computer_time", "gps_time", "has_gps", "clipping", "sample_rate", "latitude", "longitude", "elevation", "satellite_count", "speed", "heading", "count_samples", "samples", "checksum"},
-    .units = {"s", "s", "", "", "Hz", "degrees", "degrees", "m", "", "m/s", "degrees", "", "", ""}
+const CaptureSchema2 v3_schema = {
+    .columns = {
+        ColumnSchema{
+            .label = "computer_time",
+            .unit = "s",
+            .netcdf_type = NC_DOUBLE
+        },
+        ColumnSchema{
+            .label = "gps_time",
+            .unit = "s",
+            .netcdf_type = NC_INT
+        },
+        ColumnSchema{
+            .label = "has_gps",
+            .unit = "",
+            .netcdf_type = NC_BYTE
+        },
+        ColumnSchema{
+            .label = "clipping",
+            .unit = "",
+            .netcdf_type = NC_BYTE
+        },
+        ColumnSchema{
+            .label = "sample_rate",
+            .unit = "Hz",
+            .netcdf_type = NC_DOUBLE
+        },
+        ColumnSchema{
+            .label = "latitude",
+            .unit = "degrees",
+            .netcdf_type = NC_DOUBLE
+        },
+        ColumnSchema{
+            .label = "longitude",
+            .unit = "degrees",
+            .netcdf_type = NC_DOUBLE
+        },
+        ColumnSchema{
+            .label = "elevation",
+            .unit = "m",
+            .netcdf_type = NC_DOUBLE
+        },
+        ColumnSchema{
+            .label = "satellite_count",
+            .unit = "",
+            .netcdf_type = NC_INT
+        },
+        ColumnSchema{
+            .label = "speed",
+            .unit = "m/s",
+            .netcdf_type = NC_DOUBLE
+        },
+        ColumnSchema{
+            .label = "heading",
+            .unit = "degrees",
+            .netcdf_type = NC_DOUBLE
+        },
+        ColumnSchema{
+            .label = "count_samples",
+            .unit = "",
+            .netcdf_type = NC_INT
+        },
+        ColumnSchema{
+            .label = "samples",
+            .unit = "",
+            .netcdf_type = NC_USHORT
+        }
+    }
 };
 
-struct Line_v2 {
-    int gps_time;
-    bool has_gps;
-    bool clipping;
-    double sample_rate;
-    double latitude;
-    double longitude;
-    double elevation;
-    int satellite_count;
-    double speed;
-    double heading;
-    int count_samples;
-    std::vector<int> samples;
-};
-
-struct Line_v3 {
-    double computer_time;
-    int gps_time;
-    bool has_gps;
-    bool clipping;
-    double sample_rate;
-    double latitude;
-    double longitude;
-    double elevation;
-    int satellite_count;
-    double speed;
-    double heading;
-    int count_samples;
-    std::vector<int> samples;
-};
 
 template<typename T, typename E>
 T try_read_token(std::istringstream& stream, const std::string& token_name) {
@@ -157,12 +259,9 @@ std::map<std::string, std::string> parse_metadata(std::istream& stream) {
     return metadata;
 }
 
-Line_v2 parse_line_v2(const std::string& line) {
+std::map<std::string, std::any> parse_line_v2(const std::string& line) {
     std::string token;
     std::istringstream tokenStream(line);
-
-    auto label_it = CaptureSchemaV2.labels.begin();
-    auto type_it = CaptureSchemaV2.types.begin();
 
     int gps_time = try_read_token<int, std::string>(tokenStream, "gps_time");
     std::string flags = try_read_token<std::string, std::string>(tokenStream, "flags");
@@ -175,8 +274,8 @@ Line_v2 parse_line_v2(const std::string& line) {
     double heading = try_read_token<double, std::string>(tokenStream, "heading");
     int count_samples = try_read_token<int, std::string>(tokenStream, "count_samples");
 
-    bool clipping = flags.find('C') != std::string::npos;
-    bool has_gps = flags.find('G') != std::string::npos;
+    char clipping = flags.find('C') != std::string::npos;
+    char has_gps = flags.find('G') != std::string::npos;
 
     // Read data
     std::vector<int> tokens;
@@ -194,29 +293,26 @@ Line_v2 parse_line_v2(const std::string& line) {
         throw std::runtime_error("Checksum failed");
     }
 
-    return Line_v2 {
-        .gps_time = gps_time,
-        .has_gps = has_gps,
-        .clipping = clipping,
-        .sample_rate = sample_rate,
-        .latitude = latitude,
-        .longitude = longitude,
-        .elevation = elevation,
-        .satellite_count = satellite_count,
-        .speed = speed,
-        .heading = heading,
-        .count_samples = count_samples,
-        .samples = tokens
+    return std::map<std::string, std::any> {
+        {"gps_time", gps_time},
+        {"has_gps", has_gps},
+        {"clipping", clipping},
+        {"sample_rate", sample_rate},
+        {"latitude", latitude},
+        {"longitude", longitude},
+        {"elevation", elevation},
+        {"satellite_count", satellite_count},
+        {"speed", speed},
+        {"heading", heading},
+        {"count_samples", count_samples},
+        {"samples", tokens}
     };
 
 }
 
-Line_v3 parse_line_v3(const std::string& line) {
+std::map<std::string, std::any> parse_line_v3(const std::string& line) {
     std::string token;
     std::istringstream tokenStream(line);
-
-    auto label_it = CaptureSchemaV3.labels.begin();
-    auto type_it = CaptureSchemaV3.types.begin();
 
     double computer_time = try_read_token<double, std::string>(tokenStream, "computer_time");
     int gps_time = try_read_token<int, std::string>(tokenStream, "gps_time");
@@ -230,8 +326,8 @@ Line_v3 parse_line_v3(const std::string& line) {
     double heading = try_read_token<double, std::string>(tokenStream, "heading");
     int count_samples = try_read_token<int, std::string>(tokenStream, "count_samples");
 
-    bool clipping = flags.find('C') != std::string::npos;
-    bool has_gps = flags.find('G') != std::string::npos;
+    char clipping = flags.find('C') != std::string::npos;
+    char has_gps = flags.find('G') != std::string::npos;
 
     // Read data
     std::vector<int> tokens;
@@ -249,20 +345,20 @@ Line_v3 parse_line_v3(const std::string& line) {
         throw std::runtime_error("Checksum failed");
     }
 
-    return Line_v3 {
-        .computer_time = computer_time,
-        .gps_time = gps_time,
-        .has_gps = has_gps,
-        .clipping = clipping,
-        .sample_rate = sample_rate,
-        .latitude = latitude,
-        .longitude = longitude,
-        .elevation = elevation,
-        .satellite_count = satellite_count,
-        .speed = speed,
-        .heading = heading,
-        .count_samples = count_samples,
-        .samples = tokens
+    return std::map<std::string, std::any> {
+        {"computer_time", computer_time},
+        {"gps_time", gps_time},
+        {"has_gps", has_gps},
+        {"clipping", clipping},
+        {"sample_rate", sample_rate},
+        {"latitude", latitude},
+        {"longitude", longitude},
+        {"elevation", elevation},
+        {"satellite_count", satellite_count},
+        {"speed", speed},
+        {"heading", heading},
+        {"count_samples", count_samples},
+        {"samples", tokens}
     };
 
 }

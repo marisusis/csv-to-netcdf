@@ -14,7 +14,6 @@
 #include <ranges>
 
 #include "parsing.hpp"
-#include "writing.hpp"
 #include "utils.hpp"
 
 void handle_error(int status) {
@@ -119,17 +118,17 @@ int main(int argc, char **argv) {
         spdlog::debug("detected schema version {} from {}", schema_version, files.front().string());
     }
 
-    CaptureSchema schema;
+    const CaptureSchema2* schema2;
 
     switch (schema_version) {
         case 1:
-            schema = CaptureSchemaV1;
+            schema2 = &v1_schema;
             break;
         case 2:
-            schema = CaptureSchemaV2;
+            schema2 = &v2_schema;
             break;
         case 3:
-            schema = CaptureSchemaV3;
+            schema2 = &v3_schema;
             break;
         default:
             spdlog::error("invalid schema version: {}", schema_version);
@@ -214,27 +213,24 @@ int main(int argc, char **argv) {
     dimids["time"] = time_dimid;
     dimids["sample"] = sample_dimid;
 
-    // std::vector<std::string> basic_labels = {"gps_time", "computer_time", "has_gps", "clipping", "latitude", "longitude" };
-
-    auto columns = std::views::zip(schema.labels, schema.netcdf_types, schema.units);
-    for (const auto& [label, type, unit] : columns) {
-        if (label == "samples") {
+    for (const ColumnSchema& column : schema2->columns) {
+        if (column.label == "samples") {
             break;
         }
 
         int varid;
-        handle_error(nc_def_var(ncid, label.c_str(), type, 1, &dimids["time"], &varid));
+        handle_error(nc_def_var(ncid, column.label.c_str(), column.netcdf_type, 1, &dimids["time"], &varid));
 
         if (deflate) {
             handle_error(nc_def_var_deflate(ncid, varid, 0, 1, deflate));
         }
 
-        if (!unit.empty()) {
-            nc_put_att(ncid, varid, "units", NC_CHAR, unit.length(), unit.c_str());
+        if (!column.unit.empty()) {
+            nc_put_att(ncid, varid, "units", NC_CHAR, column.unit.length(), column.unit.c_str());
         }
 
-        varids[label] = varid;
-        spdlog::debug("Created variable: {} with type: {}", label, type);
+        varids[column.label] = varid;
+        spdlog::debug("created variable \"{}\" with type \"{}\"", column.label, column.netcdf_type);
     }
 
     int dims[2] = {dimids["time"], dimids["sample"]};
@@ -282,6 +278,7 @@ int main(int argc, char **argv) {
     size_t lines = 0;
     size_t time_coord = 0;
     spdlog::info("processing data lines...");
+    std::ios::sync_with_stdio(false);
     for (size_t i = 0; i < files.size(); i++) {
         const auto& file_path = files[i];
         std::ifstream file;
@@ -298,15 +295,51 @@ int main(int argc, char **argv) {
             }
 
             try {
+
+                std::map<std::string, std::any> parsed;
+
                 if (schema_version == 1) {
                     spdlog::error("Schema version 1 not supported");
                     exit(EXIT_FAILURE);
                 } else if (schema_version == 2) {
-                    auto result = parse_line_v2(line);
-                    write_line_v2(result, ncid, varids, time_coord);
+                    parsed = parse_line_v2(line);
                 } else if (schema_version == 3) {
-                    auto result = parse_line_v3(line);
-                    write_line_v3(result, ncid, varids, time_coord);
+                    parsed = parse_line_v3(line);
+                }
+
+                for (const auto& column : schema2->columns) {
+
+                    if (parsed.find(column.label) == parsed.end()) {
+                        spdlog::error("missing column: {}", column.label);
+                        continue;
+                    }
+
+                    if (column.label == "samples") {
+                        size_t startp[2] = {time_coord, 0};
+                        size_t countp[2] = {1, static_cast<size_t>(7200)};
+
+                        std::vector<int> samples = std::any_cast<std::vector<int>>(parsed["samples"]);
+                        std::vector<short> samples_short(samples.begin(), samples.end());
+                        nc_put_vara_short(ncid, varids["samples"], startp, countp, samples_short.data());
+                        continue;
+                    }
+
+                    if (column.netcdf_type == NC_INT) {
+                        int int_value = std::any_cast<int>(parsed[column.label]);
+                        nc_put_var1_int(ncid, varids[column.label], &time_coord, &int_value);
+                    } else if (column.netcdf_type == NC_DOUBLE) {
+                        double value = std::any_cast<double>(parsed[column.label]);
+                        nc_put_var1_double(ncid, varids[column.label], &time_coord, &value);
+                    } else if (column.netcdf_type == NC_BYTE) {
+                        int byte_value = std::any_cast<char>(parsed[column.label]);
+                        nc_put_var1_int(ncid, varids[column.label], &time_coord, &byte_value);
+                    } else if (column.netcdf_type == NC_SHORT) {
+                        short short_value = std::any_cast<short>(parsed[column.label]);
+                        nc_put_var1_short(ncid, varids[column.label], &time_coord, &short_value);
+                    } else if (column.netcdf_type == NC_STRING) {
+                        std::string str_value = std::any_cast<std::string>(parsed[column.label]);
+                        nc_put_var1_text(ncid, varids[column.label], &time_coord, str_value.c_str());
+                    }
                 }
             } catch (const std::exception& e) {
                 spdlog::debug("Error parsing line {}: {}\nLINE: {}", lines, e.what(), line.substr(0, 20));
@@ -320,6 +353,7 @@ int main(int argc, char **argv) {
             time_coord++;
         }
     }
+    std::ios::sync_with_stdio(true);
 
     bar2.mark_as_completed();
 

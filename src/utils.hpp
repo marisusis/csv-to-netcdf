@@ -7,7 +7,10 @@
 #include "parsing.hpp"
 
 size_t count_data_lines(std::istream& file) {
-    return std::count(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>(), '\n');
+    std::ios::sync_with_stdio(false);
+    auto result = std::count(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>(), '\n');
+    std::ios::sync_with_stdio(true);
+    return result;
 }
 
 size_t count_data_lines_fast(std::filesystem::path file_path) {
