@@ -42,7 +42,7 @@ const CaptureSchema2 v2_schema = {
         ColumnSchema{
             .label = "gps_time",
             .unit = "s",
-            .netcdf_type = NC_INT
+            .netcdf_type = NC_UINT64
         },
         ColumnSchema{
             .label = "has_gps",
@@ -105,14 +105,14 @@ const CaptureSchema2 v2_schema = {
 const CaptureSchema2 v3_schema = {
     .columns = {
         ColumnSchema{
-            .label = "computer_time",
+            .label = "cpu_time",
             .unit = "s",
             .netcdf_type = NC_DOUBLE
         },
         ColumnSchema{
             .label = "gps_time",
             .unit = "s",
-            .netcdf_type = NC_INT
+            .netcdf_type = NC_UINT64
         },
         ColumnSchema{
             .label = "has_gps",
@@ -175,6 +175,7 @@ const CaptureSchema2 v3_schema = {
 
 template<typename T, typename E>
 T try_read_token(std::istringstream& stream, const std::string& token_name) {
+    spdlog::trace("reading token: {}", token_name);
     std::string token;
     if (!std::getline(stream, token, ',').good()) {
         if (stream.eof()) {
@@ -190,6 +191,10 @@ T try_read_token(std::istringstream& stream, const std::string& token_name) {
         return std::stod(token);
     } else if constexpr (std::is_same_v<T, int> || std::is_same_v<T, uint32_t>) {
         return static_cast<T>(std::stoi(token));
+    } else if constexpr (std::is_same_v<T, uint64_t>) {
+        return static_cast<T>(std::stoull(token));
+    } else if constexpr (std::is_same_v<T, int64_t>) {
+        return static_cast<T>(std::stoll(token));
     } else if constexpr (std::is_same_v<T, std::string>) {
         return token;
     }
@@ -263,7 +268,7 @@ std::map<std::string, std::any> parse_line_v2(const std::string& line) {
     std::string token;
     std::istringstream tokenStream(line);
 
-    int gps_time = try_read_token<int, std::string>(tokenStream, "gps_time");
+    uint64_t gps_time = try_read_token<uint64_t, std::string>(tokenStream, "gps_time");
     std::string flags = try_read_token<std::string, std::string>(tokenStream, "flags");
     double sample_rate = try_read_token<double, std::string>(tokenStream, "sample_rate");
     double latitude = try_read_token<double, std::string>(tokenStream, "latitude");
@@ -314,8 +319,8 @@ std::map<std::string, std::any> parse_line_v3(const std::string& line) {
     std::string token;
     std::istringstream tokenStream(line);
 
-    double computer_time = try_read_token<double, std::string>(tokenStream, "computer_time");
-    int gps_time = try_read_token<int, std::string>(tokenStream, "gps_time");
+    double computer_time = try_read_token<double, std::string>(tokenStream, "cpu_time");
+    uint64_t gps_time = try_read_token<uint64_t, std::string>(tokenStream, "gps_time");
     std::string flags = try_read_token<std::string, std::string>(tokenStream, "flags");
     double sample_rate = try_read_token<double, std::string>(tokenStream, "sample_rate");
     double latitude = try_read_token<double, std::string>(tokenStream, "latitude");
@@ -346,7 +351,7 @@ std::map<std::string, std::any> parse_line_v3(const std::string& line) {
     }
 
     return std::map<std::string, std::any> {
-        {"computer_time", computer_time},
+        {"cpu_time", computer_time},
         {"gps_time", gps_time},
         {"has_gps", has_gps},
         {"clipping", clipping},

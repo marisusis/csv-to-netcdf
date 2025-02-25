@@ -43,10 +43,10 @@ int get_schema_version(std::istream& file) {
 
     if (metadata.empty()) {
         return 1;
-    } else if (metadata.find("gps_time") != metadata.end()) {
+    } else if (!metadata.empty() && metadata.find("version") == metadata.end()) {
         return 2;
     } else if (metadata.find("version") != metadata.end()) {
-        return 3;
+        return std::stoi(metadata["version"]);
     }
 
     for (const auto& [key, value] : metadata) {
@@ -57,3 +57,17 @@ int get_schema_version(std::istream& file) {
 
 }
 
+// by Useless from https://stackoverflow.com/questions/1088622/how-do-i-create-an-array-of-strings-in-c
+std::vector<char*> strlist(std::vector<std::string> &input) {
+    std::vector<char*> result;
+
+    // remember the nullptr terminator
+    result.reserve(input.size()+1);
+
+    std::transform(begin(input), end(input),
+                   std::back_inserter(result),
+                   [](std::string &s) { return s.data(); }
+                  );
+    result.push_back(nullptr);
+    return result;
+}

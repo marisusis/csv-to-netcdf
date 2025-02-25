@@ -29,8 +29,10 @@ using namespace indicators;
 int main(int argc, char **argv) {
     CLI::App app;
 
-    bool verbose = false;
-    app.add_flag("--verbose,-v", verbose, "Print verbose output");
+    // bool verbose = false;
+    // app.add_flag("--verbose,-v", verbose, "Print verbose output");
+
+    CLI::Option* verbose_option = app.add_flag("--verbose,-v", "Print verbose output");
 
     bool file_list;
     app.add_flag("--file-list", file_list, "Treat input file as a list of files");
@@ -53,7 +55,10 @@ int main(int argc, char **argv) {
         ->check(CLI::Range(1, 9));
 
     bool scaffold = false;
-    app.add_flag("--scaffold,-q", scaffold, "Create a scaffold NetCDF file without writing data");
+    app.add_flag("--scaffold", scaffold, "Create a scaffold NetCDF file without writing data");
+
+    bool dont_write = false;
+    app.add_flag("--dont-write", dont_write, "Don't write data to the NetCDF file");
 
     CLI11_PARSE(app, argc, argv);
 
@@ -61,8 +66,10 @@ int main(int argc, char **argv) {
     spdlog::set_pattern("[%^%l%$] %v");
     spdlog::info("hello.");
 
-    if (verbose) {
+    if (verbose_option->count() == 1) {
         spdlog::set_level(spdlog::level::debug);
+    } else if (verbose_option->count() > 1) {
+        spdlog::set_level(spdlog::level::trace);
     }
 
     if (deflate) {
@@ -185,7 +192,8 @@ int main(int argc, char **argv) {
     spdlog::info("preparing netcdf file...");
 
     // Create the file
-    handle_error(nc_create(output_file_path.c_str(), NC_NETCDF4, &ncid));
+    std::string output_file_temp = output_file_path + ".tmp";
+    handle_error(nc_create(output_file_temp.c_str(), NC_NETCDF4, &ncid));
 
     int format;
     nc_inq_format(ncid, &format);
@@ -206,6 +214,15 @@ int main(int argc, char **argv) {
             spdlog::debug("Added metadata: {} = {}", lower_key, val);
         }
     }
+
+    std::vector<char*> text;
+    text.reserve(files.size());
+
+    std::transform(files.begin(), files.end(), std::back_inserter(text), [](const fs::path& p) {
+        return strdup(p.filename().string().c_str());
+    });
+
+    handle_error(nc_put_att(ncid, NC_GLOBAL, "source_files", NC_STRING, text.size(), text.data()));
 
     // Define dimensions
     handle_error(nc_def_dim(ncid, "time", NC_UNLIMITED, &time_dimid));
@@ -234,8 +251,8 @@ int main(int argc, char **argv) {
     }
 
     int dims[2] = {dimids["time"], dimids["sample"]};
-    handle_error(nc_def_var(ncid, "parsing_errors", NC_INT, 2, dims, &varid));
-    varids["parsing_errors"] = varid;
+    // handle_error(nc_def_var(ncid, "parsing_errors", NC_INT, 2, dims, &varid));
+    // varids["parsing_errors"] = varid;
 
     // Define the samples variable
     handle_error(nc_def_var(ncid, "samples", NC_SHORT, 2, dims, &varid));
@@ -253,6 +270,8 @@ int main(int argc, char **argv) {
     if (scaffold) {
         spdlog::warn("Scaffold mode enabled, skipping data processing");
         handle_error(nc_close(ncid));
+        spdlog::info("moving temporary file to final location... {}->{}", output_file_temp, output_file_path);    
+        fs::rename(output_file_temp, output_file_path);
         spdlog::info("Successfully created NetCDF file: {}\n", output_file_path);
         return 0;
     }
@@ -274,7 +293,7 @@ int main(int argc, char **argv) {
 
     bar2.set_option(option::PostfixText{"processing"});
 
-    size_t errors = 0;
+    uint64_t errors = 0;
     size_t lines = 0;
     size_t time_coord = 0;
     spdlog::info("processing data lines...");
@@ -288,6 +307,8 @@ int main(int argc, char **argv) {
         file.seekg(0, std::ios::beg);
 
         for (std::string line; std::getline(file, line);) {
+            bar2.set_progress(lines * 100 / total_lines);
+            bar2.set_option(option::PostfixText{std::format("{}/{} lines, {}/{} files, {} errors", lines, total_lines, i, files.size(), errors)});
             lines++;
 
             if (line.empty() || line.at(0) == '#') {
@@ -305,6 +326,10 @@ int main(int argc, char **argv) {
                     parsed = parse_line_v2(line);
                 } else if (schema_version == 3) {
                     parsed = parse_line_v3(line);
+                }
+
+                if (dont_write) {
+                    continue;
                 }
 
                 for (const auto& column : schema2->columns) {
@@ -339,6 +364,18 @@ int main(int argc, char **argv) {
                     } else if (column.netcdf_type == NC_STRING) {
                         std::string str_value = std::any_cast<std::string>(parsed[column.label]);
                         nc_put_var1_text(ncid, varids[column.label], &time_coord, str_value.c_str());
+                    } else if (column.netcdf_type == NC_INT64) {
+                        int64_t int64_value = std::any_cast<int64_t>(parsed[column.label]);
+                        nc_put_var1_longlong(ncid, varids[column.label], &time_coord, &int64_value);
+                    } else if (column.netcdf_type == NC_UINT) {
+                        unsigned int uint_value = std::any_cast<unsigned int>(parsed[column.label]);
+                        nc_put_var1_uint(ncid, varids[column.label], &time_coord, &uint_value);
+                    } else if (column.netcdf_type == NC_UINT64) {
+                        unsigned long long uint64_value = std::any_cast<unsigned long long>(parsed[column.label]);
+                        nc_put_var1_ulonglong(ncid, varids[column.label], &time_coord, &uint64_value);
+                    } else {
+                        spdlog::error("unsupported NetCDF type: {}", column.netcdf_type);
+                        exit(EXIT_FAILURE);
                     }
                 }
             } catch (const std::exception& e) {
@@ -346,9 +383,6 @@ int main(int argc, char **argv) {
                 errors++;
                 continue;
             }
-
-            bar2.set_progress(lines * 100 / total_lines);
-            bar2.set_option(option::PostfixText{std::format("{}/{} lines, {}/{} files, {} errors", lines, total_lines, i, files.size(), errors)});
 
             time_coord++;
         }
@@ -361,9 +395,16 @@ int main(int argc, char **argv) {
         spdlog::warn("Encountered {} errors while parsing the input file", errors);
     }
 
+    handle_error(nc_put_att(ncid, NC_GLOBAL, "parsing_errors", NC_INT64, 1, &errors));
+    handle_error(nc_put_att(ncid, NC_GLOBAL, "complete", NC_CHAR, 4, "yes"));
+
     // Close the file
     handle_error(nc_close(ncid));
 
-    spdlog::info("Successfully created NetCDF file: {}\n", output_file_path);
+    // Move the temporary file to the final location
+    spdlog::info("moving temporary file to final location... {}->{}", output_file_temp, output_file_path);
+    fs::rename(output_file_temp, output_file_path);
+
+    spdlog::info("successfully created NetCDF file: {}", output_file_path);
     return 0;
 }
