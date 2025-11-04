@@ -365,7 +365,7 @@ int main(int argc, char **argv) {
                         std::string str_value = std::any_cast<std::string>(parsed[column.label]);
                         nc_put_var1_text(ncid, varids[column.label], &time_coord, str_value.c_str());
                     } else if (column.netcdf_type == NC_INT64) {
-                        int64_t int64_value = std::any_cast<int64_t>(parsed[column.label]);
+                        const long long int64_value = std::any_cast<long long>(parsed[column.label]);
                         nc_put_var1_longlong(ncid, varids[column.label], &time_coord, &int64_value);
                     } else if (column.netcdf_type == NC_UINT) {
                         unsigned int uint_value = std::any_cast<unsigned int>(parsed[column.label]);
