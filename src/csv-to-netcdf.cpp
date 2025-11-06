@@ -24,6 +24,9 @@
 
 const size_t BYTES_PER_LINE_ESTIMATE = 28800;
 
+const size_t TIME_CHUNKING = 60;
+const size_t TIME_SLICING = 60;
+
 void handle_error(int status) {
     if (status != NC_NOERR) {
         spdlog::error("NetCDF error (code {}): {}", status, nc_strerror(status));
@@ -238,6 +241,9 @@ int main(int argc, char **argv) {
 
         nc_put_att(ncid, varid, "long_name", NC_CHAR, column.long_name.length(), column.long_name.c_str());
 
+        size_t chunk_sizes[1] = {TIME_CHUNKING};
+        handle_error(nc_def_var_chunking(ncid, varid, NC_CHUNKED, chunk_sizes));
+
         varids[column.label] = varid;
         spdlog::debug("created variable \"{}\" with type \"{}\"", column.label, column.netcdf_type);
     }
@@ -246,7 +252,7 @@ int main(int argc, char **argv) {
     handle_error(nc_put_att(ncid, varid, "units", NC_CHAR, 3, "ms"));
 
     int dims[2] = {dimids["time"], dimids["sample"]};
-    size_t chunk_sizes[2] = {60, 7200};
+    size_t chunk_sizes[2] = {TIME_CHUNKING, 7200};
 
     handle_error(nc_def_var(ncid, "samples", NC_SHORT, 2, dims, &varid));
     short valid_range[2] = {0, 1023};
@@ -351,9 +357,9 @@ int main(int argc, char **argv) {
                     nc_put_value<double>(ncid, varids["speed"], &time_coord, parsed.speed);
                     nc_put_value<double>(ncid, varids["heading"], &time_coord, parsed.heading);
 
-                    size_t startp[2] = {time_coord, 0};
-                    size_t countp[2] = {1, static_cast<size_t>(7200)};
-                    nc_put_vara_short(ncid, varids["samples"], startp, countp, parsed.samples.data());
+                    std::array<size_t, 2> startp = {time_coord, 0};
+                    std::array<size_t, 2> countp = {1, static_cast<size_t>(7200)};
+                    nc_put_value_array<short, 2>(ncid, varids["samples"], startp, countp, parsed.samples);
                     time_coord++;
                 }
             }
