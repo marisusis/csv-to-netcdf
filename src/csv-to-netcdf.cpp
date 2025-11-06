@@ -12,6 +12,11 @@
 #include <regex>
 #include <filesystem>
 #include <ranges>
+#include <future>
+#include <deque>
+#include <optional>
+#include <thread>
+#include <chrono>
 
 #include "csv.hpp"
 #include "parsing.hpp"
@@ -31,10 +36,7 @@ using namespace indicators;
 
 int main(int argc, char **argv) {
     CLI::App app;
-
-    // bool verbose = false;
-    // app.add_flag("--verbose,-v", verbose, "Print verbose output");
-
+    
     CLI::Option* verbose_option = app.add_flag("--verbose,-v", "Print verbose output");
 
     bool file_list;
@@ -271,6 +273,7 @@ int main(int argc, char **argv) {
         option::PostfixText{"Processing data lines"},
         option::ForegroundColor{Color::yellow},
         option::ShowElapsedTime{true},
+        option::ShowPercentage{true},
         option::ShowRemainingTime{true},
         option::FontStyles{std::vector<FontStyle>{FontStyle::bold}},
     };
@@ -283,14 +286,84 @@ int main(int argc, char **argv) {
     size_t time_coord = 0;
     spdlog::info("processing data lines...");
     std::ios::sync_with_stdio(false);
+
+    // Asynchronous parsing + ordered writing:
+    size_t max_workers = std::thread::hardware_concurrency();
+    spdlog::info("Detected {} hardware threads", max_workers);
+    if (max_workers == 0) max_workers = 4;
+    size_t max_queue = std::max<size_t>(4, max_workers * 4);
+
+    struct ParseOutcome {
+        std::optional<ParsedLine> parsed;
+        std::string error;
+    };
+
+    struct Pending {
+        std::future<ParseOutcome> fut;
+        std::string line;
+        size_t local_line;
+        fs::path file_path;
+    };
+
+    std::deque<Pending> pending;
+
+    auto flush_ready = [&](bool force = false) {
+        using namespace std::chrono_literals;
+        while (!pending.empty()) {
+            auto &p = pending.front();
+            if (!force) {
+                if (p.fut.wait_for(0ms) != std::future_status::ready) break;
+            } else {
+                p.fut.wait();
+            }
+
+            ParseOutcome outcome = p.fut.get();
+            // Process outcome in-order
+            if (!outcome.parsed.has_value()) {
+                // parsing failed
+                errors++;
+                spdlog::error("Error parsing line {} in file {}: {}\nLINE: {}", p.local_line, p.file_path.string(), outcome.error, p.line.substr(0, 100));
+            } else {
+                ParsedLine &parsed = *outcome.parsed;
+                if (!dont_write) {
+                    if (auto cpu_time = parsed.cpu_time) {
+                        nc_put_value<double>(ncid, varids["cpu_time"], &time_coord, *cpu_time);
+                    }
+                    if (auto gps_time = parsed.gps_time) {
+                        nc_put_value<unsigned long long>(ncid, varids["gps_time"], &time_coord, *gps_time);
+                    }
+                    nc_put_value<char>(ncid, varids["has_gps"], &time_coord, static_cast<char>(parsed.has_gps));
+                    nc_put_value<char>(ncid, varids["clipping"], &time_coord, static_cast<char>(parsed.clipping));
+                    nc_put_value<double>(ncid, varids["sample_rate"], &time_coord, parsed.sample_rate);
+                    nc_put_value<double>(ncid, varids["latitude"], &time_coord, parsed.latitude);
+                    nc_put_value<double>(ncid, varids["longitude"], &time_coord, parsed.longitude);
+                    nc_put_value<double>(ncid, varids["elevation"], &time_coord, parsed.elevation);
+                    nc_put_value<int>(ncid, varids["satellite_count"], &time_coord, parsed.satellite_count);
+                    nc_put_value<double>(ncid, varids["speed"], &time_coord, parsed.speed);
+                    nc_put_value<double>(ncid, varids["heading"], &time_coord, parsed.heading);
+
+                    size_t startp[2] = {time_coord, 0};
+                    size_t countp[2] = {1, static_cast<size_t>(7200)};
+                    nc_put_vara_short(ncid, varids["samples"], startp, countp, parsed.samples.data());
+                    time_coord++;
+                }
+            }
+
+            pending.pop_front();
+        }
+    };
+
     for (CSVFile& csv_file : csv_files) {
         file_counter++;
-
-
         size_t local_line_counter = 0;
+
+        std::string file_name = csv_file.file_path().filename().string();
+        SchemaVersion schema_version = csv_file.get_schema_version();
+        bar2.set_option(option::PostfixText{std::format("{} v{} {}/{} files, {} errors", file_name, static_cast<int>(schema_version), file_counter, files.size(), errors)});
+
+
         for (auto line : csv_file) {
-            bar2.set_progress(line_counter * 100 / total_lines);
-            bar2.set_option(option::PostfixText{std::format("{}/{} lines, {}/{} files, {} errors", line_counter, total_lines, file_counter, files.size(), errors)});
+            bar2.set_progress(line_counter * 100 / (total_lines == 0 ? 1 : total_lines));
             line_counter++;
             local_line_counter++;
 
@@ -300,60 +373,54 @@ int main(int argc, char **argv) {
 
             if (line.at(0) == '$') {
                 spdlog::warn("bad line detected at file {}, line {}", csv_file.file_path().string(), local_line_counter);
-            }
-
-            try {
-
-                ParsedLine parsed;
-
-                if (schema_version == 1) {
-                    spdlog::error("Schema version 1 not supported");
-                    exit(EXIT_FAILURE);
-                } else if (schema_version == 2) {
-                    parsed = parse_line_v2(line);
-                } else if (schema_version == 3) {
-                    parsed = parse_line_v3(line);
-                }
-
-                if (dont_write) {
-                    continue;
-                }
-
-                if (auto cpu_time = parsed.cpu_time) {
-                    nc_put_value<double>(ncid, varids["cpu_time"], &time_coord, *cpu_time);
-                }
-
-                if (auto gps_time = parsed.gps_time) {
-                    nc_put_value<unsigned long long>(ncid, varids["gps_time"], &time_coord, *gps_time);
-                }
-
-                nc_put_value<char>(ncid, varids["has_gps"], &time_coord, static_cast<char>(parsed.has_gps));
-                nc_put_value<char>(ncid, varids["clipping"], &time_coord, static_cast<char>(parsed.clipping));
-                nc_put_value<double>(ncid, varids["sample_rate"], &time_coord, parsed.sample_rate);
-                nc_put_value<double>(ncid, varids["latitude"], &time_coord, parsed.latitude);
-                nc_put_value<double>(ncid, varids["longitude"], &time_coord, parsed.longitude);
-                nc_put_value<double>(ncid, varids["elevation"], &time_coord, parsed.elevation);
-                nc_put_value<int>(ncid, varids["satellite_count"], &time_coord, parsed.satellite_count);
-                nc_put_value<double>(ncid, varids["speed"], &time_coord, parsed.speed);
-                nc_put_value<double>(ncid, varids["heading"], &time_coord, parsed.heading);
-
-                // Write array of samples
-                size_t startp[2] = {time_coord, 0};
-                size_t countp[2] = {1, static_cast<size_t>(7200)};
-                nc_put_vara_short(ncid, varids["samples"], startp, countp, parsed.samples.data());
-
-            } catch (const std::exception& e) {
-                spdlog::debug("Error parsing line {} in file {}: {}\nLINE: {}", local_line_counter, csv_file.file_path().string(), e.what(), line.substr(0, 100));
-                errors++;
                 continue;
             }
 
-            time_coord++;
-        }
-    }
-    std::ios::sync_with_stdio(true);
+            // Launch async parse task
+            auto task_line = line; // copy for async
+            auto file_path_copy = csv_file.file_path();
+            size_t local_copy = local_line_counter;
 
-    bar2.mark_as_completed();
+            auto fut = std::async(std::launch::async, [task_line, schema_version]() -> ParseOutcome {
+                try {
+                    ParsedLine parsed;
+                    if (schema_version == Schema_V1) {
+                        // maintain original behavior
+                        throw std::runtime_error("Schema version 1 not supported");
+                    } else if (schema_version == Schema_V2) {
+                        parsed = parse_line_v2(task_line);
+                    } else if (schema_version == Schema_V3) {
+                        parsed = parse_line_v3(task_line);
+                    } else {
+                        return ParseOutcome{std::nullopt, "unknown schema version"};
+                    }
+                    return ParseOutcome{std::make_optional(parsed), std::string()};
+                } catch (const std::exception &e) {
+                    return ParseOutcome{std::nullopt, e.what()};
+                } catch (...) {
+                    return ParseOutcome{std::nullopt, "unknown exception"};
+                }
+            });
+
+            pending.push_back(Pending{std::move(fut), std::move(task_line), local_copy, file_path_copy});
+
+            // throttle number of outstanding tasks and flush ready ones
+            if (pending.size() > max_queue) {
+                flush_ready(false);
+                // if still too large (no ready ones), block on the front to free space
+                if (pending.size() > max_queue) {
+                    pending.front().fut.wait();
+                    flush_ready(false);
+                }
+            }
+        }
+        // After finishing a file, try to flush ready tasks to keep memory low
+        flush_ready(false);
+    }
+
+    // Wait for all remaining tasks (force-complete)
+    flush_ready(true);
+    std::ios::sync_with_stdio(true);
 
     if (errors > 0) {
         spdlog::warn("Encountered {} errors while parsing the input file", errors);

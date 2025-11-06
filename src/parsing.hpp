@@ -120,6 +120,7 @@ T try_read_token(std::istringstream& stream, const std::string& token_name) {
     }
     
     if constexpr (std::is_same_v<T, double>) {
+        spdlog::trace("parsing double token: {}", token);
         return std::stod(token);
     } else if constexpr (std::is_same_v<T, int> || std::is_same_v<T, uint32_t>) {
         // spdlog::trace("parsing int token: {}", token);

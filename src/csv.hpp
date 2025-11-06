@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iterator>
 #include <filesystem>
+#include "parsing.hpp"
 
 class CSVFile {
 
@@ -14,6 +15,7 @@ class CSVFile {
 
         const std::filesystem::path file_path() const;
         const size_t size_bytes() const;
+        const SchemaVersion get_schema_version() const;
 
         // Line iterator that yields one line at a time from the CSV file.
         struct LineIterator {
@@ -50,7 +52,7 @@ class CSVFile {
         line_iterator end() const;
 
     private:
-        std::string file_path_;
+        std::filesystem::path file_path_;
 
 };
 

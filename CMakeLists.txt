@@ -2,6 +2,11 @@ project(csv-to-netcdf
   LANGUAGES C CXX
 )
 
+# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pg")
+# set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pg")
+# set(CMAKE_BUILD_TYPE Debug)
+
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -18,6 +23,7 @@ set(CLI11_PRECOMPILED)
 
 add_executable(csv-to-netcdf
   src/parsing.cpp
+  src/csv.cpp
   src/csv-to-netcdf.cpp
 )
 target_link_libraries(csv-to-netcdf PRIVATE 
