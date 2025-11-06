@@ -201,11 +201,18 @@ int main(int argc, char **argv) {
     std::vector<char*> text;
     text.reserve(csv_files.size());
 
-    std::transform(csv_files.begin(), csv_files.end(), std::back_inserter(text), [](const CSVFile& f) {
-        return const_cast<char*>(f.file_path().filename().c_str());
-    });
+    std::string csv_file_names;
+    for (const auto& csv_file : csv_files) {
+        if (!csv_file_names.empty()) {
+            csv_file_names += ", ";
+        }
+        csv_file_names += csv_file.file_path().filename().string();
+    }
 
-    handle_error(nc_put_att(ncid, NC_GLOBAL, "source_files", NC_STRING, text.size(), text.data()));
+    spdlog::debug("source_files: {}", csv_file_names);
+
+    const char* source_files[] = {csv_file_names.c_str()};
+    handle_error(nc_put_att(ncid, NC_GLOBAL, "source_files", NC_STRING, 1, source_files));
 
     // Define dimensions
     handle_error(nc_def_dim(ncid, "time", NC_UNLIMITED, &time_dimid));
@@ -229,6 +236,8 @@ int main(int argc, char **argv) {
             nc_put_att(ncid, varid, "units", NC_CHAR, column.unit.length(), column.unit.c_str());
         }
 
+        nc_put_att(ncid, varid, "long_name", NC_CHAR, column.long_name.length(), column.long_name.c_str());
+
         varids[column.label] = varid;
         spdlog::debug("created variable \"{}\" with type \"{}\"", column.label, column.netcdf_type);
     }
@@ -237,6 +246,7 @@ int main(int argc, char **argv) {
     handle_error(nc_put_att(ncid, varid, "units", NC_CHAR, 3, "ms"));
 
     int dims[2] = {dimids["time"], dimids["sample"]};
+    size_t chunk_sizes[2] = {60, 7200};
 
     handle_error(nc_def_var(ncid, "samples", NC_SHORT, 2, dims, &varid));
     short valid_range[2] = {0, 1023};
@@ -244,6 +254,8 @@ int main(int argc, char **argv) {
     handle_error(nc_put_att(ncid, varid, "valid_max", NC_SHORT, 1, &valid_range[1]));
     varids["samples"] = varid;
     if (deflate) {
+        spdlog::info("applying chunking and deflate to samples variable");
+        handle_error(nc_def_var_chunking(ncid, varids["samples"], NC_CHUNKED, chunk_sizes));
         handle_error(nc_def_var_deflate(ncid, varids["samples"], 0, 1, deflate));
     }
 

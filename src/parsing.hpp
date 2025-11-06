@@ -22,6 +22,7 @@ enum SchemaVersion {
 
 struct ColumnSchema {
     std::string label;
+    std::string long_name;
     std::string unit;
     uint32_t netcdf_type;
 };
@@ -44,61 +45,73 @@ struct ParsedLine {
 const std::array<ColumnSchema, 13> COLUMNS = {
     ColumnSchema{
         .label = "cpu_time",
+        .long_name = "CPU Time",
         .unit = "s",
         .netcdf_type = NC_DOUBLE
     },
     ColumnSchema{
         .label = "gps_time",
+        .long_name = "GPS Time",
         .unit = "s",
         .netcdf_type = NC_UINT64
     },
     ColumnSchema{
         .label = "has_gps",
+        .long_name = "GPS Lock Status",
         .unit = "",
         .netcdf_type = NC_BYTE
     },
     ColumnSchema{
         .label = "clipping",
+        .long_name = "ADC Clipping Reported",
         .unit = "",
         .netcdf_type = NC_BYTE
     },
     ColumnSchema{
         .label = "sample_rate",
+        .long_name = "Sample Rate",
         .unit = "Hz",
         .netcdf_type = NC_DOUBLE
     },
     ColumnSchema{
         .label = "latitude",
+        .long_name = "Latitude",
         .unit = "degrees",
         .netcdf_type = NC_DOUBLE
     },
     ColumnSchema{
         .label = "longitude",
+        .long_name = "Longitude",
         .unit = "degrees",
         .netcdf_type = NC_DOUBLE
     },
     ColumnSchema{
         .label = "elevation",
+        .long_name = "Elevation",
         .unit = "m",
         .netcdf_type = NC_DOUBLE
     },
     ColumnSchema{
         .label = "satellite_count",
+        .long_name = "Number of Satellites",
         .unit = "",
         .netcdf_type = NC_INT
     },
     ColumnSchema{
         .label = "speed",
+        .long_name = "Speed",
         .unit = "m/s",
         .netcdf_type = NC_DOUBLE
     },
     ColumnSchema{
         .label = "heading",
+        .long_name = "Heading",
         .unit = "degrees",
         .netcdf_type = NC_DOUBLE
     },
     ColumnSchema{
         .label = "samples",
+        .long_name = "Samples",
         .unit = "",
         .netcdf_type = NC_USHORT
     }
