@@ -13,8 +13,11 @@
 #include <filesystem>
 #include <ranges>
 
+#include "csv.hpp"
 #include "parsing.hpp"
 #include "utils.hpp"
+
+const size_t BYTES_PER_LINE_ESTIMATE = 28800;
 
 void handle_error(int status) {
     if (status != NC_NOERR) {
@@ -77,6 +80,7 @@ int main(int argc, char **argv) {
     }
 
     std::vector<fs::path> files;
+    std::vector<CSVFile> csv_files;
 
     if (file_list) {
         fs::path input_path = input_file_path;
@@ -87,11 +91,13 @@ int main(int argc, char **argv) {
         file_stream.open(input_file_path);
         for (std::string line; std::getline(file_stream, line);) {
             files.push_back(input_directory / line);
+            csv_files.emplace_back(input_directory / line);
         }
 
         spdlog::warn("not supported yet");
     } else {
         files.push_back(input_file_path);
+        csv_files.emplace_back(input_file_path);
     }
 
     spdlog::info("validating input files...");
@@ -125,23 +131,6 @@ int main(int argc, char **argv) {
         spdlog::debug("detected schema version {} from {}", schema_version, files.front().string());
     }
 
-    const CaptureSchema2* schema2;
-
-    switch (schema_version) {
-        case 1:
-            schema2 = &v1_schema;
-            break;
-        case 2:
-            schema2 = &v2_schema;
-            break;
-        case 3:
-            schema2 = &v3_schema;
-            break;
-        default:
-            spdlog::error("invalid schema version: {}", schema_version);
-            exit(EXIT_FAILURE);
-    }
-
     ProgressBar bar{
         option::BarWidth{30},
         option::Start{"["},
@@ -156,25 +145,15 @@ int main(int argc, char **argv) {
         option::FontStyles{std::vector<FontStyle>{FontStyle::bold}},
     };
 
+
     // Preprocess files
     size_t total_lines = 0;
-    for (size_t i = 0; i < files.size(); i++) {
-        const auto& file_path = files[i];
+    for (size_t i = 0; i < csv_files.size(); i++) {
+        const auto& csv_file = csv_files[i];
         bar.set_option(option::PostfixText{std::format("preprocessing {}/{} files", i, files.size())});
 
-        file.open(file_path);
-
-        const int file_schema_version = get_schema_version(file);
-
-        if (file_schema_version != schema_version) {
-            spdlog::error("schema version mismatch: {} != {}", file_schema_version, schema_version);
-            exit(EXIT_FAILURE);
-        }
-
-        std::filesystem::path path = file_path;
-
-        spdlog::debug("file size: {} bytes", std::filesystem::file_size(path));
-        total_lines += std::filesystem::file_size(path) / 28800;
+        spdlog::debug("file size: {} bytes", csv_file.size_bytes());
+        total_lines += csv_file.size_bytes() / BYTES_PER_LINE_ESTIMATE;
 
         // total_lines += count_data_lines_fast(file_path);
         bar.set_progress((i + 1) * 100 / files.size());
@@ -235,7 +214,7 @@ int main(int argc, char **argv) {
     dimids["time"] = time_dimid;
     dimids["sample"] = sample_dimid;
 
-    for (const ColumnSchema& column : schema2->columns) {
+    for (const ColumnSchema& column : columns) {
         if (column.label == "samples") {
             break;
         }
@@ -255,11 +234,11 @@ int main(int argc, char **argv) {
         spdlog::debug("created variable \"{}\" with type \"{}\"", column.label, column.netcdf_type);
     }
 
-    int dims[2] = {dimids["time"], dimids["sample"]};
-    // handle_error(nc_def_var(ncid, "parsing_errors", NC_INT, 2, dims, &varid));
-    // varids["parsing_errors"] = varid;
+    handle_error(nc_def_var(ncid, "test111", NC_INT, 1, &dimids["time"], &varid));
+    handle_error(nc_put_att(ncid, varid, "units", NC_CHAR, 3, "ms"));
 
-    // Define the samples variable
+    int dims[2] = {dimids["time"], dimids["sample"]};
+
     handle_error(nc_def_var(ncid, "samples", NC_SHORT, 2, dims, &varid));
     short valid_range[2] = {0, 1023};
     handle_error(nc_put_att(ncid, varid, "valid_min", NC_SHORT, 1, &valid_range[0]));
@@ -299,30 +278,33 @@ int main(int argc, char **argv) {
     bar2.set_option(option::PostfixText{"processing"});
 
     uint64_t errors = 0;
-    size_t lines = 0;
+    size_t line_counter = 0;
+    size_t file_counter = 0;
     size_t time_coord = 0;
     spdlog::info("processing data lines...");
     std::ios::sync_with_stdio(false);
-    for (size_t i = 0; i < files.size(); i++) {
-        const auto& file_path = files[i];
-        std::ifstream file;
-        file.open(file_path);
+    for (CSVFile& csv_file : csv_files) {
+        file_counter++;
 
-        file.clear();
-        file.seekg(0, std::ios::beg);
 
-        for (std::string line; std::getline(file, line);) {
-            bar2.set_progress(lines * 100 / total_lines);
-            bar2.set_option(option::PostfixText{std::format("{}/{} lines, {}/{} files, {} errors", lines, total_lines, i, files.size(), errors)});
-            lines++;
+        size_t local_line_counter = 0;
+        for (auto line : csv_file) {
+            bar2.set_progress(line_counter * 100 / total_lines);
+            bar2.set_option(option::PostfixText{std::format("{}/{} lines, {}/{} files, {} errors", line_counter, total_lines, file_counter, files.size(), errors)});
+            line_counter++;
+            local_line_counter++;
 
             if (line.empty() || line.at(0) == '#') {
                 continue;
             }
 
+            if (line.at(0) == '$') {
+                spdlog::warn("bad line detected at file {}, line {}", csv_file.file_path().string(), local_line_counter);
+            }
+
             try {
 
-                std::map<std::string, std::any> parsed;
+                ParsedLine parsed;
 
                 if (schema_version == 1) {
                     spdlog::error("Schema version 1 not supported");
@@ -337,58 +319,31 @@ int main(int argc, char **argv) {
                     continue;
                 }
 
-                for (const auto& column : schema2->columns) {
-
-                    if (parsed.find(column.label) == parsed.end()) {
-                        spdlog::error("missing column: {}", column.label);
-                        continue;
-                    }
-
-                    if (column.label == "samples") {
-                        size_t startp[2] = {time_coord, 0};
-                        size_t countp[2] = {1, static_cast<size_t>(7200)};
-
-                        std::vector<int> samples = std::any_cast<std::vector<int>>(parsed["samples"]);
-                        std::vector<short> samples_short(samples.begin(), samples.end());
-                        nc_put_vara_short(ncid, varids["samples"], startp, countp, samples_short.data());
-                        continue;
-                    }
-
-                    spdlog::trace("writing column {} with type {}", column.label, column.netcdf_type);
-
-                    if (column.netcdf_type == NC_INT) {
-                        int int_value = std::any_cast<int>(parsed[column.label]);
-                        nc_put_var1_int(ncid, varids[column.label], &time_coord, &int_value);
-                    } else if (column.netcdf_type == NC_DOUBLE) {
-                        double value = std::any_cast<double>(parsed[column.label]);
-                        nc_put_var1_double(ncid, varids[column.label], &time_coord, &value);
-                    } else if (column.netcdf_type == NC_BYTE) {
-                        int byte_value = std::any_cast<char>(parsed[column.label]);
-                        nc_put_var1_int(ncid, varids[column.label], &time_coord, &byte_value);
-                    } else if (column.netcdf_type == NC_SHORT) {
-                        short short_value = std::any_cast<short>(parsed[column.label]);
-                        nc_put_var1_short(ncid, varids[column.label], &time_coord, &short_value);
-                    } else if (column.netcdf_type == NC_STRING) {
-                        std::string str_value = std::any_cast<std::string>(parsed[column.label]);
-                        nc_put_var1_text(ncid, varids[column.label], &time_coord, str_value.c_str());
-                    } else if (column.netcdf_type == NC_INT64) {
-                        spdlog::trace("writing int64 value for column {}", column.label);
-                        const long long int64_value = std::any_cast<long long>(parsed[column.label]);
-                        nc_put_var1_longlong(ncid, varids[column.label], &time_coord, &int64_value);
-                    } else if (column.netcdf_type == NC_UINT) {
-                        unsigned int uint_value = std::any_cast<unsigned int>(parsed[column.label]);
-                        nc_put_var1_uint(ncid, varids[column.label], &time_coord, &uint_value);
-                    } else if (column.netcdf_type == NC_UINT64) {
-                        spdlog::trace("writing uint64 value for column {}", column.label);
-                        unsigned long long uint64_value = std::any_cast<unsigned long long>(parsed[column.label]);
-                        nc_put_var1_ulonglong(ncid, varids[column.label], &time_coord, &uint64_value);
-                    } else {
-                        spdlog::error("unsupported NetCDF type: {}", column.netcdf_type);
-                        exit(EXIT_FAILURE);
-                    }
+                if (auto cpu_time = parsed.cpu_time) {
+                    nc_put_value<double>(ncid, varids["cpu_time"], &time_coord, *cpu_time);
                 }
+
+                if (auto gps_time = parsed.gps_time) {
+                    nc_put_value<unsigned long long>(ncid, varids["gps_time"], &time_coord, *gps_time);
+                }
+
+                nc_put_value<char>(ncid, varids["has_gps"], &time_coord, static_cast<char>(parsed.has_gps));
+                nc_put_value<char>(ncid, varids["clipping"], &time_coord, static_cast<char>(parsed.clipping));
+                nc_put_value<double>(ncid, varids["sample_rate"], &time_coord, parsed.sample_rate);
+                nc_put_value<double>(ncid, varids["latitude"], &time_coord, parsed.latitude);
+                nc_put_value<double>(ncid, varids["longitude"], &time_coord, parsed.longitude);
+                nc_put_value<double>(ncid, varids["elevation"], &time_coord, parsed.elevation);
+                nc_put_value<int>(ncid, varids["satellite_count"], &time_coord, parsed.satellite_count);
+                nc_put_value<double>(ncid, varids["speed"], &time_coord, parsed.speed);
+                nc_put_value<double>(ncid, varids["heading"], &time_coord, parsed.heading);
+
+                // Write array of samples
+                size_t startp[2] = {time_coord, 0};
+                size_t countp[2] = {1, static_cast<size_t>(7200)};
+                nc_put_vara_short(ncid, varids["samples"], startp, countp, parsed.samples.data());
+
             } catch (const std::exception& e) {
-                spdlog::debug("Error parsing line {} in file {}: {}\nLINE: {}", lines, file_path.string(), e.what(), line.substr(0, 100));
+                spdlog::debug("Error parsing line {} in file {}: {}\nLINE: {}", local_line_counter, csv_file.file_path().string(), e.what(), line.substr(0, 100));
                 errors++;
                 continue;
             }

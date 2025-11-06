@@ -4,7 +4,8 @@
 #include <istream>
 #include <map>
 #include <string>
-#include "parsing.hpp"
+#include "netcdf.h"
+// #include "parsing.hpp"
 
 size_t count_data_lines(std::istream& file) {
     std::ios::sync_with_stdio(false);
@@ -70,4 +71,32 @@ std::vector<char*> strlist(std::vector<std::string> &input) {
                   );
     result.push_back(nullptr);
     return result;
+}
+
+template<typename T> void nc_put_value(
+    const int ncid,
+    const int varid,
+    const size_t* coord,
+    const T& value
+) {
+    if constexpr (std::is_same_v<T, int>) {
+        nc_put_var1_int(ncid, varid, coord, &value);
+    } else if constexpr (std::is_same_v<T, double>) {
+        nc_put_var1_double(ncid, varid, coord, &value);
+    } else if constexpr (std::is_same_v<T, char>) {
+        int int_value = static_cast<int>(value);
+        nc_put_var1_int(ncid, varid, coord, &int_value);
+    } else if constexpr (std::is_same_v<T, short>) {
+        nc_put_var1_short(ncid, varid, coord, &value);
+    } else if constexpr (std::is_same_v<T, std::string>) {
+        nc_put_var1_text(ncid, varid, coord, value.c_str());
+    } else if constexpr (std::is_same_v<T, unsigned long long>) {
+        nc_put_var1_ulonglong(ncid, varid, coord, &value);
+    } else if constexpr (std::is_same_v<T, long long>) {
+        nc_put_var1_longlong(ncid, varid, coord, &value);
+    } else if constexpr (std::is_same_v<T, unsigned int>) {
+        nc_put_var1_uint(ncid, varid, coord, &value);
+    } else {
+        static_assert(false, "Unsupported type for nc_put_value");
+    }
 }
