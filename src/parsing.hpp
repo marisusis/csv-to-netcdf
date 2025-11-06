@@ -41,7 +41,7 @@ struct ParsedLine {
     std::vector<int16_t> samples;
 };
 
-const std::array<ColumnSchema, 13> columns = {
+const std::array<ColumnSchema, 13> COLUMNS = {
     ColumnSchema{
         .label = "cpu_time",
         .unit = "s",

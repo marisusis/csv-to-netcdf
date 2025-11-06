@@ -81,7 +81,6 @@ int main(int argc, char **argv) {
         spdlog::info("compression enabled at level {}.", deflate);
     }
 
-    std::vector<fs::path> files;
     std::vector<CSVFile> csv_files;
 
     if (file_list) {
@@ -92,27 +91,25 @@ int main(int argc, char **argv) {
         file_stream.rdbuf()->pubsetbuf(0, 0);
         file_stream.open(input_file_path);
         for (std::string line; std::getline(file_stream, line);) {
-            files.push_back(input_directory / line);
             csv_files.emplace_back(input_directory / line);
         }
 
         spdlog::warn("not supported yet");
     } else {
-        files.push_back(input_file_path);
         csv_files.emplace_back(input_file_path);
     }
 
     spdlog::info("validating input files...");
-    for (const auto& file : files) {
-        spdlog::debug("file: {}", file.c_str());
-        if (!fs::exists(file)) {
-            spdlog::error("file does not exist: {}", file.c_str());
+    for (const auto& file : csv_files) {
+        spdlog::debug("file: {}", file.file_path().string());
+        if (!fs::exists(file.file_path())) {
+            spdlog::error("file does not exist: {}", file.file_path().string());
             exit(EXIT_FAILURE);
         }
 
         // Verify csv extension
-        if (file.extension() != ".csv") {
-            spdlog::error("invalid file extension: {}", file.extension().c_str());
+        if (file.file_path().extension() != ".csv") {
+            spdlog::error("invalid file extension: {}", file.file_path().extension().string());
             exit(EXIT_FAILURE);
         }
     }
@@ -125,12 +122,12 @@ int main(int argc, char **argv) {
     // Read metadata from the first file
     std::ifstream file;
     file.rdbuf()->pubsetbuf(0, 0);
-    file.open(files.front());
+    file.open(csv_files.front().file_path());
 
     if (schema_version == 0) {
         spdlog::warn("no schema version provided, detecting schema version from the first file...");
         schema_version = get_schema_version(file);
-        spdlog::debug("detected schema version {} from {}", schema_version, files.front().string());
+        spdlog::debug("detected schema version {} from {}", schema_version, csv_files.front().file_path().string());
     }
 
     ProgressBar bar{
@@ -152,13 +149,13 @@ int main(int argc, char **argv) {
     size_t total_lines = 0;
     for (size_t i = 0; i < csv_files.size(); i++) {
         const auto& csv_file = csv_files[i];
-        bar.set_option(option::PostfixText{std::format("preprocessing {}/{} files", i, files.size())});
+        bar.set_option(option::PostfixText{std::format("preprocessing {}/{} files", i, csv_files.size())});
 
         spdlog::debug("file size: {} bytes", csv_file.size_bytes());
         total_lines += csv_file.size_bytes() / BYTES_PER_LINE_ESTIMATE;
 
         // total_lines += count_data_lines_fast(file_path);
-        bar.set_progress((i + 1) * 100 / files.size());
+        bar.set_progress((i + 1) * 100 / csv_files.size());
     }
 
     file.close();
@@ -186,7 +183,7 @@ int main(int argc, char **argv) {
     spdlog::debug("NetCDF format: {}", format);
 
     if (schema_version > 1) {
-        auto file_path = files.front();
+        auto file_path = csv_files.front().file_path();
         file.open(file_path);
         std::map<std::string, std::string> metadata = parse_metadata(file);
 
@@ -202,10 +199,10 @@ int main(int argc, char **argv) {
     }
 
     std::vector<char*> text;
-    text.reserve(files.size());
+    text.reserve(csv_files.size());
 
-    std::transform(files.begin(), files.end(), std::back_inserter(text), [](const fs::path& p) {
-        return strdup(p.filename().string().c_str());
+    std::transform(csv_files.begin(), csv_files.end(), std::back_inserter(text), [](const CSVFile& f) {
+        return const_cast<char*>(f.file_path().filename().c_str());
     });
 
     handle_error(nc_put_att(ncid, NC_GLOBAL, "source_files", NC_STRING, text.size(), text.data()));
@@ -216,7 +213,7 @@ int main(int argc, char **argv) {
     dimids["time"] = time_dimid;
     dimids["sample"] = sample_dimid;
 
-    for (const ColumnSchema& column : columns) {
+    for (const ColumnSchema& column : COLUMNS) {
         if (column.label == "samples") {
             break;
         }
@@ -359,7 +356,7 @@ int main(int argc, char **argv) {
 
         std::string file_name = csv_file.file_path().filename().string();
         SchemaVersion schema_version = csv_file.get_schema_version();
-        bar2.set_option(option::PostfixText{std::format("{} v{} {}/{} files, {} errors", file_name, static_cast<int>(schema_version), file_counter, files.size(), errors)});
+        bar2.set_option(option::PostfixText{fmt::format("{} v{} {}/{} lines, {}/{} files, {} errors", file_name, static_cast<int>(schema_version), line_counter, total_lines, file_counter, csv_files.size(), errors)});
 
 
         for (auto line : csv_file) {
